@@ -100,7 +100,7 @@ def main(json_file_dir, debug_mode, dataset_name):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Downloading pdfs from three datasets in COVID_19.')
-    parser.add_argument('-d', '--json_file_dir', default='/nas/vista-ssd02/users/xiaoguo/COVID_research/PDFs/',
+    parser.add_argument('-d', '--json_file_dir', default='/nas/vista-ssd02/users/xiaoguo/COVID_research/Dataset_COVID19/',
     					help="the directory that contains json files.")
     parser.add_argument('-de', '--debug_mode', action='store_true', help="debug mode.")
     parser.set_defaults(debug_mode=False)
