@@ -511,6 +511,7 @@ def main():
     parser.add_argument(
         "--mlm_probability", type=float, default=0.15, help="Ratio of tokens to mask for masked language modeling loss"
     )
+    parser.set_defaults(mlm=True)
 
     parser.add_argument(
         "--config_name",
@@ -540,10 +541,8 @@ def main():
     )
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the dev set.")
-    parser.add_argument(
-        "--evaluate_during_training", action="store_true", help="Run evaluation during training at each logging step."
-    )
-    parser.set_defaults(evaluate_during_training=True)
+    parser.set_defaults(do_train=True)
+    parser.set_defaults(do_eval=True)
 
     parser.add_argument("--per_gpu_train_batch_size", default=4, type=int, help="Batch size per GPU/CPU for training.")
     parser.add_argument(
@@ -578,10 +577,17 @@ def main():
         default=None,
         help="Limit the total amount of checkpoints, delete the older checkpoints in the output_dir, does not delete by default",
     )
+    parser.add_argument(
+        "--eval_all_checkpoints",
+        action="store_true",
+        help="Evaluate all checkpoints starting with the same prefix as model_name_or_path ending and ending with step number",
+    )
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
     parser.add_argument(
         "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
     )
+    parser.set_defaults(overwrite_output_dir=True)
+
     parser.add_argument(
         "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets"
     )
