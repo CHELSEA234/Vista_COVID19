@@ -1,4 +1,24 @@
-# Modify it for the fine-tuning pipeline.
+# coding=utf-8
+# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
+# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+Fine-tuning the library models for language modeling on a text file (GPT, GPT-2, BERT, RoBERTa).
+GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
+using a masked language modeling (MLM) loss.
+"""
+## Note: modified version for fine-tune on SciBERT.
 
 import argparse
 import glob
@@ -197,8 +217,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     # GX: you can make changes here.
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter(log_dir='tb_logs_'+args.descr_string)
-        # args_text_str = json.dumps(vars(args))
-        # args_dict = vars(args)
         log_string_config = '  '.join([k+':'+str(v) for k,v in vars(args).items()])
         tb_writer.add_text('experiment args', log_string_config, 0)
 
@@ -384,14 +402,17 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
                     # performance on the evaluation.
                     ## TODO: so does this perplexity just come out of val_loss here?
-                    val_loss, preplexity_val = evaluate(args, model, tokenizer, prefix=prefix, debug=True)
+                    val_loss, preplexity_val = evaluate(args, model, tokenizer, prefix=prefix, debug=args.debug)
                     tb_writer.add_scalar("val/preplexity", preplexity_val, global_step)
                     tb_writer.add_scalar("val/loss", val_loss, global_step)
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
-        
+
+            if args.debug and step == 10:
+                break
+
         ## record the average loss each step per epoch
         # cur_global_step = (gobal_step-step)
         cur_epoch_loss = (tr_loss-epoch_loss) / step
@@ -480,8 +501,9 @@ def main():
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
-        "--model_type", type=str, required=True, help="The model architecture to be trained or fine-tuned.",
+        "--model_type", type=str, help="The model architecture to be trained or fine-tuned.",
     )
+    parser.set_defaults(model_type='bert')
 
     # Other parameters
     parser.add_argument(
@@ -605,6 +627,8 @@ def main():
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
         "See details at https://nvidia.github.io/apex/amp.html",
     )
+    parser.add_argument("--debug", action="store_true", help="Debug mode")
+    parser.set_defaults(debug=False)
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--server_ip", type=str, default="", help="For distant debugging.")
     parser.add_argument("--server_port", type=str, default="", help="For distant debugging.")
@@ -644,9 +668,15 @@ def main():
     ## step 3: setup various things: exper description, debug server, device and distributed training, and logging.
     ## TODO: the path may change later. 
     if "scibert_scivocab_uncased_pytorch" in args.model_name_or_path:
-        args.descr_string = "model-{}_lr-{}_maxepoch-{}_mlm-{}".format("SciBERT", args.learning_rate, args.num_train_epochs, args.mlm)
+        args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}".format("SciBERT", args.learning_rate, args.num_train_epochs, args.per_gpu_train_batch_size)
     else:
-        args.descr_string = "model-{}_lr-{}_maxepoch-{}_mlm-{}".format(args.model_type, args.learning_rate, args.num_train_epochs, args.mlm)
+        args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}".format(args.model_type, args.learning_rate, args.num_train_epochs, args.per_gpu_train_batch_size)
+
+    # Setup the debug mode
+    if args.debug:
+        args.logging_steps=2
+        args.save_steps=2
+        args.max_steps=10
 
     # Setup distant debugging if needed
     if args.server_ip and args.server_port:
