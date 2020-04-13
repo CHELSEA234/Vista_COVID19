@@ -33,6 +33,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+from distutils.dir_util import copy_tree
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -139,9 +140,13 @@ def set_seed(args):
     torch.manual_seed(args.seed)
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
-
+        
 
 def _sorted_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -> List[str]:
+    '''
+    two purpose: i) assert should_continue flag is set properly.
+    ii) help rotate_checkpoints have certain # checkpoints.
+    '''
     ordering_and_checkpoint_path = []
 
     glob_checkpoints = glob.glob(os.path.join(args.output_dir, "{}-*".format(checkpoint_prefix)))
@@ -157,25 +162,6 @@ def _sorted_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
     checkpoints_sorted = sorted(ordering_and_checkpoint_path)
     checkpoints_sorted = [checkpoint[1] for checkpoint in checkpoints_sorted]
     return checkpoints_sorted
-
-
-def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -> None:
-    if not args.save_total_limit:
-        return
-    if args.save_total_limit <= 0:
-        return
-
-    # Check if we should delete older checkpoint(s)
-    checkpoints_sorted = _sorted_checkpoints(args, checkpoint_prefix, use_mtime)
-    if len(checkpoints_sorted) <= args.save_total_limit:
-        return
-
-    number_of_checkpoints_to_delete = max(0, len(checkpoints_sorted) - args.save_total_limit)
-    checkpoints_to_be_deleted = checkpoints_sorted[:number_of_checkpoints_to_delete]
-    for checkpoint in checkpoints_to_be_deleted:
-        logger.info("Deleting older checkpoint [{}] due to args.save_total_limit".format(checkpoint))
-        shutil.rmtree(checkpoint)
-
 
 def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
@@ -316,7 +302,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             logger.info("  Starting fine-tuning.")
 
     # all steps accumulated loss, loss per epoch, loss per gradient update step.
-    tr_loss, epoch_loss, logging_loss = 0.0, 0.0, 0.0
+    tr_loss, epoch_loss, logging_loss, val_loss_previous_best = 0.0, 0.0, 0.0, 1e8
 
     model.zero_grad()
     # trange(i) is a special optimised instance of tqdm(range(i))
@@ -365,7 +351,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
-
                 if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Log metrics
                     # doing the things on the perplexity per batch.
@@ -378,33 +363,38 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
                 ## you can either save all necessary checkpoint, or only the best one.
                 if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                    checkpoint_prefix = "checkpoint"
-                    prefix = "{}-{}".format(checkpoint_prefix, global_step)
-                    # Save model checkpoint
-                    output_dir = os.path.join(args.output_dir, prefix)
-                    os.makedirs(output_dir, exist_ok=True)
+                    current_prefix = "checkpoint-current"
+                    best_prefix = "checkpoint-best"
+
+                    # in case either torch.save or tokenizer.save does not overwrite
+                    current_output_dir = os.path.join(args.output_dir, current_prefix)
+                    if os.path.isdir(current_output_dir):
+                        shutil.rmtree(current_output_dir) 
+                    os.makedirs(current_output_dir, exist_ok=True)
                     model_to_save = (
                         model.module if hasattr(model, "module") else model
                     )  # Take care of distributed/parallel training
-                    model_to_save.save_pretrained(output_dir)   # build-in save function.
-                    tokenizer.save_pretrained(output_dir)
+                    model_to_save.save_pretrained(current_output_dir)   # build-in save function.
+                    tokenizer.save_pretrained(current_output_dir)
+                    torch.save(args, os.path.join(current_output_dir, "training_args.bin"))
+                    logger.info("Saving model checkpoint to %s", current_output_dir)
+                    torch.save(optimizer.state_dict(), os.path.join(current_output_dir, "optimizer.pt"))
+                    torch.save(scheduler.state_dict(), os.path.join(current_output_dir, "scheduler.pt"))
+                    logger.info("Saving optimizer and scheduler states to %s", current_output_dir)
 
-                    torch.save(args, os.path.join(output_dir, "training_args.bin"))
-                    logger.info("Saving model checkpoint to %s", output_dir)
-
-                    ## keep certain # of checkpoint.
-                    ## if you want to keep it here, to save the best checkpoint.
-                    _rotate_checkpoints(args, checkpoint_prefix)
-
-                    torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                    logger.info("Saving optimizer and scheduler states to %s", output_dir)
-
-                    # performance on the evaluation.
-                    ## TODO: so does this perplexity just come out of val_loss here?
-                    val_loss, preplexity_val = evaluate(args, model, tokenizer, prefix=prefix, debug=args.debug)
+                    # saving the best model.
+                    val_loss, preplexity_val = evaluate(args, model, tokenizer, str(global_step), debug=args.debug)
                     tb_writer.add_scalar("val/preplexity", preplexity_val, global_step)
                     tb_writer.add_scalar("val/loss", val_loss, global_step)
+
+                    if val_loss < val_loss_previous_best:
+                        logger.info("The current model surpass the previous best.")
+                        best_output_dir = os.path.join(args.output_dir, best_prefix)
+                        if os.path.isdir(best_output_dir):
+                            shutil.rmtree(best_output_dir)
+                        os.makedirs(best_output_dir)
+                        copy_tree(current_output_dir, best_output_dir)
+                        logger.info("Saving the best model by copying  %s to %s", current_output_dir, best_output_dir)
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -666,11 +656,10 @@ def main():
         )
 
     ## step 3: setup various things: exper description, debug server, device and distributed training, and logging.
-    ## TODO: the path may change later. 
-    if "scibert_scivocab_uncased_pytorch" in args.model_name_or_path:
-        args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}".format("SciBERT", args.learning_rate, args.num_train_epochs, args.per_gpu_train_batch_size)
-    else:
-        args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}".format(args.model_type, args.learning_rate, args.num_train_epochs, args.per_gpu_train_batch_size)
+    args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}".format("SciBERT", 
+                                                                    args.learning_rate, 
+                                                                    args.num_train_epochs, 
+                                                                    args.per_gpu_train_batch_size)
 
     # Setup the debug mode
     if args.debug:
