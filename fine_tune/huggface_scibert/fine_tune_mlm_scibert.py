@@ -141,27 +141,14 @@ def set_seed(args):
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
         
+def _get_previous_checkpoint(args, last_checkpoint_name="checkpoint-current", use_mtime=False) -> List[str]:
+    last_checkpoint = os.path.join(args.output_dir, last_checkpoint_name)
+    exist_flag = os.path.isdir(last_checkpoint)
+    if exist_flag:
+        return [last_checkpoint]
+    else:
+        return []
 
-def _sorted_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -> List[str]:
-    '''
-    two purpose: i) assert should_continue flag is set properly.
-    ii) help rotate_checkpoints have certain # checkpoints.
-    '''
-    ordering_and_checkpoint_path = []
-
-    glob_checkpoints = glob.glob(os.path.join(args.output_dir, "{}-*".format(checkpoint_prefix)))
-
-    for path in glob_checkpoints:
-        if use_mtime:
-            ordering_and_checkpoint_path.append((os.path.getmtime(path), path))
-        else:
-            regex_match = re.match(".*{}-([0-9]+)".format(checkpoint_prefix), path)
-            if regex_match and regex_match.groups():
-                ordering_and_checkpoint_path.append((int(regex_match.groups()[0]), path))
-
-    checkpoints_sorted = sorted(ordering_and_checkpoint_path)
-    checkpoints_sorted = [checkpoint[1] for checkpoint in checkpoints_sorted]
-    return checkpoints_sorted
 
 def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
@@ -289,8 +276,10 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     if args.model_name_or_path and os.path.exists(args.model_name_or_path):
         try:
             # set global_step to gobal_step of last saved checkpoint from model path
-            checkpoint_suffix = args.model_name_or_path.split("-")[-1].split("/")[0]
-            global_step = int(checkpoint_suffix)
+            # checkpoint_suffix = args.model_name_or_path.split("-")[-1].split("/")[0]
+            # global_step = int(checkpoint_suffix) # just a integer here.
+            args_dict = vars(torch.load(os.path.join(args.model_name_or_path, "training_args.bin")))
+            global_step = args_dict['global_step']
             epochs_trained = global_step // (len(train_dataloader) // args.gradient_accumulation_steps)
             steps_trained_in_current_epoch = global_step % (len(train_dataloader) // args.gradient_accumulation_steps)
 
@@ -298,7 +287,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             logger.info("  Continuing training from epoch %d", epochs_trained)
             logger.info("  Continuing training from global step %d", global_step)
             logger.info("  Will skip the first %d steps in the first epoch", steps_trained_in_current_epoch)
-        except ValueError:
+        except:
             logger.info("  Starting fine-tuning.")
 
     # all steps accumulated loss, loss per epoch, loss per gradient update step.
@@ -361,10 +350,10 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                     tb_writer.add_scalar("progress/lr", scheduler.get_lr()[0], global_step)
                     logging_loss = tr_loss
 
-                ## you can either save all necessary checkpoint, or only the best one.
-                if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+                    ## save and evaluation.
                     current_prefix = "checkpoint-current"
                     best_prefix = "checkpoint-best"
+                    args.global_step = global_step
 
                     # in case either torch.save or tokenizer.save does not overwrite
                     current_output_dir = os.path.join(args.output_dir, current_prefix)
@@ -400,7 +389,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 epoch_iterator.close()
                 break
 
-            if args.debug and step == 10:
+            if args.debug and step == 20:
+                print(global_step, step)
                 break
 
         ## record the average loss each step per epoch
@@ -582,13 +572,6 @@ def main():
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
     parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
-    parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
-    parser.add_argument(
-        "--save_total_limit",
-        type=int,
-        default=None,
-        help="Limit the total amount of checkpoints, delete the older checkpoints in the output_dir, does not delete by default",
-    )
     parser.add_argument(
         "--eval_all_checkpoints",
         action="store_true",
@@ -636,11 +619,11 @@ def main():
             "or remove the --do_eval argument."
         )
     if args.should_continue:
-        sorted_checkpoints = _sorted_checkpoints(args)
-        if len(sorted_checkpoints) == 0:
+        previous_checkpoints = _get_previous_checkpoint(args)
+        if len(previous_checkpoints) == 0:
             raise ValueError("Used --should_continue but no checkpoint was found in --output_dir.")
         else:
-            args.model_name_or_path = sorted_checkpoints[-1]
+            args.model_name_or_path = previous_checkpoints[0]
 
     if (
         os.path.exists(args.output_dir)
@@ -664,8 +647,7 @@ def main():
     # Setup the debug mode
     if args.debug:
         args.logging_steps=2
-        args.save_steps=2
-        args.max_steps=10
+        args.max_steps=20
 
     # Setup distant debugging if needed
     if args.server_ip and args.server_port:
@@ -706,8 +688,6 @@ def main():
     set_seed(args)
 
     ## step 4: loading the pretrained model and tokenizer.
-    ## ?? why do we need reload tokenizer here.
-    ## ?? we should have logging output file here.
     # Load pretrained model and tokenizer
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training download model & vocab

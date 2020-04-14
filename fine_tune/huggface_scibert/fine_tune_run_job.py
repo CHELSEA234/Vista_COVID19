@@ -15,7 +15,7 @@ def main(model_name_or_path, train_file_path, eval_file_path, debug):
 
     ## hyperparameters.
     model_name_or_path = [model_name_or_path]   
-    lr_list = [5e-5, 1e-5, 5e-6]
+    lr_list = [1e-5, 5e-6, 1e-7]
     epoch_list = [2, 3]
     batch_size_list = [4, 8]
     # you can add warmup mechanism here later...
@@ -43,7 +43,7 @@ def main(model_name_or_path, train_file_path, eval_file_path, debug):
             OUT.write(f'cd {file_dir}\n')
             OUT.write(command)
         print(command)
-        qsub_command = f'qsub -P medifor -q all.q -j y -o {dest_file} -l h_rt=24:00:00,m_mem_free=20G,gpu=1 {bash_file}'
+        qsub_command = f'qsub -P medifor -q all.q -j y -o {dest_file} -l h_rt=24:00:00,h_vmem=20g,gpu=1 {bash_file}'
         print(qsub_command)
         os.system( qsub_command )
         cnt += 1
@@ -58,6 +58,6 @@ if __name__ == "__main__":
     parser.add_argument('--train_file_path', default="../COVID_19_data/abstract_train.txt")
     parser.add_argument('--eval_file_path', default="../COVID_19_data/abstract_val.txt")
     parser.add_argument('--debug', action="store_true", help="debug mode or not.")
-    # parser.set_defaults(debug=False)
+    # parser.set_defaults(debug=True)
     args = parser.parse_args()
     main(args.model_name_or_path, args.train_file_path, args.eval_file_path, args.debug)
