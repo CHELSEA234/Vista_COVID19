@@ -15,7 +15,7 @@ def main(model_name_or_path, train_file_path, eval_file_path, debug):
 
     ## hyperparameters.
     model_name_or_path = [model_name_or_path]   
-    lr_list = [1e-5, 5e-6, 1e-7]
+    lr_list = [5e-7]
     epoch_list = [2, 3]
     batch_size_list = [4, 8]
     # you can add warmup mechanism here later...
