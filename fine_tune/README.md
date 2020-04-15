@@ -12,3 +12,6 @@ This script heavily relies but different to `run_language_modeling.py` provided 
    1. only saves the **best** and the **current** checkpoint
    1. original files saves every a few epoches, runs out of the disk space
 1. Logging File
+
+## finetuned weights:
+The first version finetuned model is available: [link](https://drive.google.com/drive/folders/1SS5vltKWuNBPHWzBdsGE0l0KVXDNXIz2?usp=sharing)
