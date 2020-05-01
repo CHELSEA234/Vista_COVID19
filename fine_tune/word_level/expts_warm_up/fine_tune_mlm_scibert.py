@@ -28,6 +28,7 @@ import json
 import pickle
 import random
 import re
+import sys
 import shutil
 from typing import Dict, List, Tuple
 
@@ -57,9 +58,21 @@ try:
 except ImportError:
     from tensorboardX import SummaryWriter
 
+def init_logger(name):
+    '''set up training logger.'''
+    logger = logging.getLogger(name)
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
+    )
+    h = logging.StreamHandler(sys.stdout)
+    h.flush = sys.stdout.flush
+    logger.addHandler(h)
+    return logger
 
-logger = logging.getLogger(__name__)
-
+# Setup logging
+logger = init_logger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -275,9 +288,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     # Check if continuing training from a checkpoint
     if args.model_name_or_path and os.path.exists(args.model_name_or_path):
         try:
-            # set global_step to gobal_step of last saved checkpoint from model path
-            # checkpoint_suffix = args.model_name_or_path.split("-")[-1].split("/")[0]
-            # global_step = int(checkpoint_suffix) # just a integer here.
             args_dict = vars(torch.load(os.path.join(args.model_name_or_path, "training_args.bin")))
             global_step = args_dict['global_step']
             epochs_trained = global_step // (len(train_dataloader) // args.gradient_accumulation_steps)
@@ -316,8 +326,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
-            ## ?? should we consider the gradient here?
-            ## ?? how does Aditya consider the changes in the gradient?
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
@@ -394,7 +402,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 break
 
         ## record the average loss each step per epoch
-        # cur_global_step = (gobal_step-step)
         cur_epoch_loss = (tr_loss-epoch_loss) / step
         cur_epoch_prelexity = np.exp(cur_epoch_loss)
         epoch_loss = tr_loss
@@ -571,7 +578,7 @@ def main():
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=1500, help="Log every X updates steps.")
     parser.add_argument(
         "--eval_all_checkpoints",
         action="store_true",
@@ -639,10 +646,11 @@ def main():
         )
 
     ## step 3: setup various things: exper description, debug server, device and distributed training, and logging.
-    args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}".format("SciBERT", 
-                                                                    args.learning_rate, 
-                                                                    args.num_train_epochs, 
-                                                                    args.per_gpu_train_batch_size)
+    args.descr_string = "model-{}_lr-{}_maxepoch-{}_bs-{}_warmup-{}".format("SciBERT", 
+                                                                            args.learning_rate, 
+                                                                            args.num_train_epochs, 
+                                                                            args.per_gpu_train_batch_size,
+                                                                            args.warmup_steps)
 
     # Setup the debug mode
     if args.debug:
@@ -669,12 +677,6 @@ def main():
         args.n_gpu = 1
     args.device = device
 
-    # Setup logging
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN,
-    )
     logger.warning(
         "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
         args.local_rank,

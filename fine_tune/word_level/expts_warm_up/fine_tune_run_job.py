@@ -9,14 +9,14 @@ import argparse
 
 def main(model_name_or_path, train_file_path, eval_file_path, debug):
     ## hardcord python file name and script folder name.
-    COMMAND_TEMPLATE = 'python fine_tune_mlm_scibert.py ' if not debug else 'python fine_tune_mlm_scibert.py --debug '
+    COMMAND_TEMPLATE = 'python fine_tune_mlm_scibert.py --should_continue ' if not debug else 'python fine_tune_mlm_scibert.py --debug '
     SCRIPT_FILE = 'scripts'
     file_dir = os.path.dirname(os.path.realpath(__file__))
 
     ## hyperparameters.
     model_name_or_path = [model_name_or_path]   
-    lr_list = [5e-7]
-    epoch_list = [2, 3]
+    lr_list = [5e-5, 1e-6, 5e-6]
+    epoch_list = [1, 2, 3]
     batch_size_list = [4, 8]
     # you can add warmup mechanism here later...
 
@@ -55,8 +55,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='fine-tune scibert on COVID_19.')
     parser.add_argument('--model_name_or_path', default="../scibert_pertrained/scibert_scivocab_uncased_pytorch", 
                         help="training data precentage.")
-    parser.add_argument('--train_file_path', default="../COVID_19_data/abstract_train.txt")
-    parser.add_argument('--eval_file_path', default="../COVID_19_data/abstract_val.txt")
+    parser.add_argument('--train_file_path', default="../COVID_19_data/train.txt")
+    parser.add_argument('--eval_file_path', default="../COVID_19_data/val.txt")
     parser.add_argument('--debug', action="store_true", help="debug mode or not.")
     # parser.set_defaults(debug=True)
     args = parser.parse_args()
