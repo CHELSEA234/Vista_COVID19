@@ -15,13 +15,13 @@ def main(debug):
 
     ## hyperparameters.
     lr_list = [5e-5,2e-5,5e-6]
-    epoch_list = [1,2,3,5,10,15]
+    epoch_list = [5,10,15]
     cnt = 0
     combinations = list(product(*[lr_list,epoch_list]))
     for comb in combinations:
         comb = list(comb)
         output_dir = f'model-continued_sen_SciBERT_lr-{comb[0]}_epoch-{comb[1]}'
-        command = COMMAND_TEMPLATE + (f'--lr={comb[0]} --num_epochs={comb[1]} ')
+        command = COMMAND_TEMPLATE + (f'--learning_rate={comb[0]} --num_epochs={comb[1]} ')
 
         # print(command)
         os.makedirs(SCRIPT_FILE, exist_ok=True)
